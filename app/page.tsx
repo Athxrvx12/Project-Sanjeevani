@@ -40,7 +40,7 @@ export default function Home() {
     formData.append('file', file);
 
     try {
-      const response = await fetch('http://localhost:8000/scan-prescription', {
+      const response = await fetch('https://sanjeevani-api-84r3.onrender.com/scan-prescription', {
         method: 'POST',
         body: formData,
       });

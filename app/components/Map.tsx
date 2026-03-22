@@ -54,11 +54,23 @@ export default function Map({ selectedMeds, center }: { selectedMeds: string[], 
   const [pharmacistResponse, setPharmacistResponse] = useState<any | null>(null);
   const [isLoadingPharmacies, setIsLoadingPharmacies] = useState(false);
 
+  // 1. SEND PING FUNCTION
   const sendPing = async (pharmacy: Pharmacy) => {
+    // THE ANTI-SPAM BLOCKER
+    const now = Date.now();
+    const lastPing = localStorage.getItem('lastSanjeevaniPing');
+    if (lastPing && (now - parseInt(lastPing)) < 60000) { // 60,000 ms = 60 seconds
+      alert("🚨 Anti-Spam: Please wait 60 seconds before sending another emergency ping.");
+      return;
+    }
+
     if (selectedMeds.length === 0) {
       alert("Please select or type at least one medicine first!");
       return;
     }
+
+    // Record the time of this ping
+    localStorage.setItem('lastSanjeevaniPing', now.toString());
 
     const estimatedMinutes = Math.ceil(pharmacy.distance_meters / 80);
 
@@ -85,12 +97,23 @@ export default function Map({ selectedMeds, center }: { selectedMeds: string[], 
       setActivePingId(data.id);
       alert(`Ping sent! Tracking ${selectedMeds.length} medicines. Estimated arrival: ${estimatedMinutes} mins.`);
     }
+  }; // <--- sendPing officially ends here!
+
+  // 2. THE CANCEL FUNCTION (Safely outside of sendPing)
+  const handleCloseAndCancel = async () => {
+    if (pharmacistResponse?.id) {
+      // Tell the database this order is cancelled so it disappears from the pharmacist's screen
+      await supabase
+        .from('inquiries')
+        .update({ status: 'cancelled' })
+        .eq('id', pharmacistResponse.id);
+    }
+    setPharmacistResponse(null);
   };
 
-  // Fetch REAL pharmacies from the global Overpass API using a safe POST request
   // Fetch REAL pharmacies from the global Overpass API
   useEffect(() => {
-    // 1. Create an AbortController to prevent React Strict Mode from spamming the API
+    // Create an AbortController to prevent React Strict Mode from spamming the API
     const abortController = new AbortController();
 
     async function fetchLivePharmacies() {
@@ -113,7 +136,6 @@ export default function Map({ selectedMeds, center }: { selectedMeds: string[], 
         });
         
         if (!res.ok) {
-          // 2. Instead of crashing the app, we log a warning and exit gracefully
           console.warn("Overpass API is currently busy. Please wait a moment and try again.");
           setIsLoadingPharmacies(false);
           return; 
@@ -137,7 +159,6 @@ export default function Map({ selectedMeds, center }: { selectedMeds: string[], 
         setPharmacies(realPharmacies);
         
       } catch (err: any) {
-        // Ignore Abort errors (these are intentional cancellations)
         if (err.name === 'AbortError') {
           console.log("Duplicate API request cancelled.");
         } else {
@@ -150,7 +171,6 @@ export default function Map({ selectedMeds, center }: { selectedMeds: string[], 
     
     fetchLivePharmacies();
 
-    // 3. Cleanup function: Cancels the fetch if the component unmounts or re-runs instantly
     return () => {
       abortController.abort();
     };
@@ -252,7 +272,7 @@ export default function Map({ selectedMeds, center }: { selectedMeds: string[], 
             })()}
             
             <button 
-              onClick={() => setPharmacistResponse(null)} 
+              onClick={handleCloseAndCancel} 
               className="mt-4 w-full text-sm text-slate-500 hover:text-slate-700 font-medium bg-slate-100 py-3 rounded-xl transition-colors"
             >
               Close & Try Another Pharmacy
