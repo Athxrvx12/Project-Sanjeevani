@@ -61,12 +61,12 @@ export default function Map({ selectedMeds, center }: { selectedMeds: string[], 
     const now = Date.now();
     const lastPing = localStorage.getItem('lastSanjeevaniPing');
     if (lastPing && (now - parseInt(lastPing)) < 60000) { // 60,000 ms = 60 seconds
-      alert("🚨 Anti-Spam: Please wait 60 seconds before sending another emergency ping.");
+      toast.error("🚨 Anti-Spam: Please wait 60 seconds before sending another emergency ping.");
       return;
     }
 
     if (selectedMeds.length === 0) {
-      alert("Please select or type at least one medicine first!");
+      toast.error("Please select or type at least one medicine first!");
       return;
     }
 
@@ -93,10 +93,10 @@ export default function Map({ selectedMeds, center }: { selectedMeds: string[], 
 
     if (error) {
       console.error("Ping Error:", error);
-      alert("Failed to send ping.");
+      toast.error("Failed to send ping.");
     } else if (data) {
       setActivePingId(data.id);
-      alert(`Ping sent! Tracking ${selectedMeds.length} medicines. Estimated arrival: ${estimatedMinutes} mins.`);
+      toast.success(`Ping sent! Tracking ${selectedMeds.length} medicines. Estimated arrival: ${estimatedMinutes} mins.`);
     }
   }; // <--- sendPing officially ends here!
 

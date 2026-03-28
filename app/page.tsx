@@ -58,11 +58,11 @@ export default function Home() {
         const allMeds = parsedData.map((m: any) => `${m.medicine} ${m.dosage}`);
         setSelectedMeds(allMeds);
       } else {
-        alert("No readable medicine found in the image. Please try a clearer photo.");
+        toast.error("No readable medicine found in the image. Please try a clearer photo.");
       }
     } catch (error: any) {
       console.error("AI Scan Error:", error);
-      alert(`Scan failed: ${error.message}`);
+      toast.error(`Scan failed: ${error.message}`);
     } finally {
       setIsScanning(false);
       if (fileInputRef.current) fileInputRef.current.value = ''; 
@@ -102,11 +102,11 @@ export default function Home() {
       if (data && data.length > 0) {
         setMapCenter([parseFloat(data[0].lat), parseFloat(data[0].lon)]);
       } else {
-        alert("Location not found. Try adding a city name, e.g., 'Goregaon, Mumbai'.");
+        toast.error("Location not found. Try adding a city name, e.g., 'Goregaon, Mumbai'.");
       }
     } catch (err) {
       console.error(err);
-      alert("Error finding location.");
+      toast.error("Error finding location.");
     } finally {
       setIsLocating(false);
     }
@@ -121,12 +121,12 @@ export default function Home() {
           setIsLocating(false);
         },
         (error) => {
-          alert("Could not get your location. Please check browser permissions.");
+          toast.error("Could not get your location. Please check browser permissions.");
           setIsLocating(false);
         }
       );
     } else {
-      alert("Geolocation is not supported by your browser.");
+      toast.error("Geolocation is not supported by your browser.");
     }
   };
 
