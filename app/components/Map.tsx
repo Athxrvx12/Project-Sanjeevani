@@ -100,10 +100,9 @@ export default function Map({ selectedMeds, center }: { selectedMeds: string[], 
     }
   }; // <--- sendPing officially ends here!
 
-  // 2. THE CANCEL FUNCTION (Safely outside of sendPing)
+  // 2. THE CANCEL FUNCTION
   const handleCloseAndCancel = async () => {
     if (pharmacistResponse?.id) {
-      // Tell the database this order is cancelled so it disappears from the pharmacist's screen
       await supabase
         .from('inquiries')
         .update({ status: 'cancelled' })
@@ -114,7 +113,6 @@ export default function Map({ selectedMeds, center }: { selectedMeds: string[], 
 
   // Fetch REAL pharmacies from the global Overpass API
   useEffect(() => {
-    // Create an AbortController to prevent React Strict Mode from spamming the API
     const abortController = new AbortController();
 
     async function fetchLivePharmacies() {
@@ -133,7 +131,7 @@ export default function Map({ selectedMeds, center }: { selectedMeds: string[], 
             'Content-Type': 'application/x-www-form-urlencoded'
           },
           body: `data=${encodeURIComponent(query)}`,
-          signal: abortController.signal // Attach the abort signal
+          signal: abortController.signal
         });
         
         if (!res.ok) {
@@ -202,11 +200,11 @@ export default function Map({ selectedMeds, center }: { selectedMeds: string[], 
   }, [activePingId]);
 
   return (
-    <div className="h-[60vh] w-full rounded-xl overflow-hidden shadow-lg border-2 border-sky-100 relative z-0">
+    <div className="h-[60vh] w-full rounded-xl overflow-hidden shadow-lg border-2 border-sky-100 dark:border-slate-700 relative z-0">
       
       {/* Loading Overlay */}
       {isLoadingPharmacies && (
-        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[1000] bg-white/90 backdrop-blur-sm px-4 py-2 rounded-full shadow-md text-sm font-bold text-sky-600 animate-pulse border border-sky-100">
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[1000] bg-white/90 dark:bg-slate-800/90 backdrop-blur-sm px-4 py-2 rounded-full shadow-md text-sm font-bold text-sky-600 dark:text-sky-400 animate-pulse border border-sky-100 dark:border-slate-700">
           Scanning satellite data for pharmacies...
         </div>
       )}
@@ -233,17 +231,17 @@ export default function Map({ selectedMeds, center }: { selectedMeds: string[], 
         ))}
       </MapContainer>
 
-      {/* THE SMART MULTI-MEDICINE MODAL WITH DYNAMIC PRICING */}
+      {/* THE SMART MULTI-MEDICINE MODAL WITH DYNAMIC PRICING (Now with Dark Mode!) */}
       {pharmacistResponse && (
         <div className="absolute top-0 left-0 w-full h-full bg-slate-900/60 backdrop-blur-sm z-[9999] flex items-center justify-center p-4">
-          <div className="bg-white p-8 rounded-2xl shadow-2xl max-w-md w-full animate-in zoom-in duration-200">
-            <h2 className="text-2xl font-bold text-slate-800 mb-4">Pharmacist Response</h2>
+          <div className="bg-white dark:bg-slate-800 p-8 rounded-2xl shadow-2xl max-w-md w-full animate-in zoom-in duration-200 border border-slate-200 dark:border-slate-700">
+            <h2 className="text-2xl font-bold text-slate-800 dark:text-white mb-4">Pharmacist Response</h2>
             
             <div className="space-y-3 mb-6">
               {pharmacistResponse.data.medicines.map((med: any, i: number) => (
-                <div key={i} className={`p-3 rounded-lg flex justify-between items-center border ${med.status === 'in_stock' ? 'bg-emerald-50 border-emerald-200' : 'bg-rose-50 border-rose-200'}`}>
-                  <span className="font-medium text-slate-700">{med.name}</span>
-                  <span className={`font-bold text-sm px-2 py-1 rounded ${med.status === 'in_stock' ? 'text-emerald-700 bg-emerald-100' : 'text-rose-700 bg-rose-100'}`}>
+                <div key={i} className={`p-3 rounded-lg flex justify-between items-center border ${med.status === 'in_stock' ? 'bg-emerald-50 dark:bg-emerald-900/30 border-emerald-200 dark:border-emerald-800' : 'bg-rose-50 dark:bg-rose-900/30 border-rose-200 dark:border-rose-800'}`}>
+                  <span className="font-medium text-slate-700 dark:text-slate-200">{med.name}</span>
+                  <span className={`font-bold text-sm px-2 py-1 rounded ${med.status === 'in_stock' ? 'text-emerald-700 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-900/50' : 'text-rose-700 dark:text-rose-400 bg-rose-100 dark:bg-rose-900/50'}`}>
                     {med.status === 'in_stock' ? '✓ In Stock' : '❌ Out of Stock'}
                   </span>
                 </div>
@@ -258,14 +256,14 @@ export default function Map({ selectedMeds, center }: { selectedMeds: string[], 
                 return (
                   <a 
                     href={`upi://pay?pa=sanjeevani@ybl&pn=Project+Sanjeevani&am=${totalAmount}.00&tn=Token+For+${pharmacistResponse.id}`}
-                    className="block w-full text-center bg-emerald-600 text-white py-4 rounded-xl font-bold hover:bg-emerald-700 shadow-md transition-all active:scale-95 text-lg"
+                    className="block w-full text-center bg-emerald-600 text-white py-4 rounded-xl font-bold hover:bg-emerald-700 dark:bg-emerald-500 dark:hover:bg-emerald-600 shadow-md transition-all active:scale-95 text-lg"
                   >
                     Pay ₹{totalAmount} UPI Reservation
                   </a>
                 );
               } else {
                 return (
-                  <div className="bg-rose-100 border border-rose-200 text-rose-700 p-4 rounded-xl text-center font-bold">
+                  <div className="bg-rose-100 dark:bg-rose-900/50 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-400 p-4 rounded-xl text-center font-bold">
                     Order Declined: No requested items are in stock.
                   </div>
                 );
@@ -274,7 +272,7 @@ export default function Map({ selectedMeds, center }: { selectedMeds: string[], 
             
             <button 
               onClick={handleCloseAndCancel} 
-              className="mt-4 w-full text-sm text-slate-500 hover:text-slate-700 font-medium bg-slate-100 py-3 rounded-xl transition-colors"
+              className="mt-4 w-full text-sm text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 font-medium bg-slate-100 dark:bg-slate-700/50 py-3 rounded-xl transition-colors"
             >
               Close & Try Another Pharmacy
             </button>
