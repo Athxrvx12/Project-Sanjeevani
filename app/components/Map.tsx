@@ -5,6 +5,7 @@ import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 import { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase'; 
+import toast from 'react-hot-toast';
 
 const DefaultIcon = L.icon({
   iconUrl: 'https://unpkg.com/leaflet@1.7.1/dist/images/marker-icon.png',

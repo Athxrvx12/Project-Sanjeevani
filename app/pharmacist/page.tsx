@@ -36,12 +36,21 @@ export default function PharmacistDashboard() {
     fetchPending();
 
     const channel = supabase
-      .channel('pharmacist-alerts')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'inquiries' },
-        (payload) => {
-          setInquiries((current) => [payload.new as Inquiry, ...current]);
+      .channel('pharmacist-dashboard')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'inquiries' }, (payload) => {
+        // ... (Your existing code that adds the new ping to the screen) ...
+      })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'inquiries' }, (payload) => {
+        // NEW: Listen for patient cancellations!
+        if (payload.new.status === 'cancelled') {
+          // 1. Remove it from the pharmacist's screen
+          setInquiries((prev) => prev.filter((inquiry) => inquiry.id !== payload.new.id));
+          
+          // 2. Alert the pharmacist so they can put the medicine back on the shelf
+          alert("A patient cancelled their reservation. You can release the stock.");
         }
-      ).subscribe();
+      })
+      .subscribe();
 
     return () => { supabase.removeChannel(channel); };
   }, []);
@@ -77,7 +86,6 @@ export default function PharmacistDashboard() {
       return inq;
     }));
   };
-  // SUBMIT FINAL RESPONSE TO PATIENT
   // SUBMIT FINAL RESPONSE TO PATIENT
   const submitResponse = async (inq: Inquiry) => {
     const payload = parsePayload(inq.medicine_query);
