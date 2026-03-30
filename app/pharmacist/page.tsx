@@ -2,52 +2,60 @@
 
 import { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
+import ThemeToggle from '../components/ThemeToggle';
+import toast from 'react-hot-toast';
+import { Activity, CheckCircle2, XCircle, Send, Clock, MapPin, AlertCircle } from 'lucide-react';
 
-interface Inquiry {
-  id: string;
-  medicine_query: string; // Now holds our JSON payload!
-  status: string;
-  created_at: string;
-  pharmacy_id: string;
-}
+// Types to keep our data structured
+type Medicine = { name: string; status: 'pending' | 'in_stock' | 'out_of_stock' };
+type Payload = { medicines: Medicine[]; eta_minutes: number; patient_distance: string };
+type Inquiry = { id: string; pharmacy_id: string; medicine_query: string; status: string; created_at: string };
+
+// Extended type so we don't have to keep JSON.parsing the query
+type ParsedInquiry = Inquiry & { parsedQuery: Payload };
 
 export default function PharmacistDashboard() {
-  const [inquiries, setInquiries] = useState<Inquiry[]>([]);
-  
-  // NEW: Toaster Notification State
-  const [toast, setToast] = useState<{ show: boolean; message: string }>({ show: false, message: '' });
-
-  const triggerToast = (message: string) => {
-    setToast({ show: true, message });
-    setTimeout(() => setToast({ show: false, message: '' }), 4000); // Hides after 4 seconds
-  };
+  const [inquiries, setInquiries] = useState<ParsedInquiry[]>([]);
+  const [isProcessing, setIsProcessing] = useState<string | null>(null);
 
   useEffect(() => {
-    const fetchPending = async () => {
-      const { data } = await supabase
+    // 1. Fetch existing pending inquiries on load
+    const fetchInquiries = async () => {
+      const { data, error } = await supabase
         .from('inquiries')
         .select('*')
         .eq('status', 'pending')
         .order('created_at', { ascending: false });
-      
-      if (data) setInquiries(data);
+
+      if (data) {
+        const parsedData = data.map(item => ({
+          ...item,
+          parsedQuery: JSON.parse(item.medicine_query)
+        }));
+        setInquiries(parsedData);
+      }
     };
+    fetchInquiries();
 
-    fetchPending();
-
+    // 2. THE REAL-TIME RADAR (Listens for new pings AND cancellations)
     const channel = supabase
       .channel('pharmacist-dashboard')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'inquiries' }, (payload) => {
-        // ... (Your existing code that adds the new ping to the screen) ...
+        if (payload.new.status === 'pending') {
+          const newInquiry = {
+            ...payload.new,
+            parsedQuery: JSON.parse(payload.new.medicine_query)
+          } as ParsedInquiry;
+          
+          setInquiries(prev => [newInquiry, ...prev]);
+          toast.success("🚨 New Emergency Ping received!");
+        }
       })
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'inquiries' }, (payload) => {
-        // NEW: Listen for patient cancellations!
+        // THE CANCELLATION LISTENER: If a user cancels, remove it from the screen!
         if (payload.new.status === 'cancelled') {
-          // 1. Remove it from the pharmacist's screen
-          setInquiries((prev) => prev.filter((inquiry) => inquiry.id !== payload.new.id));
-          
-          // 2. Alert the pharmacist so they can put the medicine back on the shelf
-          alert("A patient cancelled their reservation. You can release the stock.");
+          setInquiries(prev => prev.filter(inq => inq.id !== payload.new.id));
+          toast.error("A patient cancelled their request. You can release the stock.", { icon: '⚠️' });
         }
       })
       .subscribe();
@@ -55,182 +63,172 @@ export default function PharmacistDashboard() {
     return () => { supabase.removeChannel(channel); };
   }, []);
 
-  // SAFE PARSER: Handles both new JSON payloads and old test strings so your app doesn't crash
-  const parsePayload = (queryStr: string) => {
-    try {
-      const parsed = JSON.parse(queryStr);
-      if (parsed.medicines) return parsed;
-      throw new Error("Old format");
-    } catch {
-      return { 
-        medicines: [{ name: queryStr, status: 'pending' }], 
-        eta_minutes: 'N/A', 
-        patient_distance: 'Unknown' 
-      };
-    }
-  };
-
-  // TOGGLE INDIVIDUAL MEDICINE
-  // TOGGLE INDIVIDUAL MEDICINE
-  const toggleMedicineStock = (inquiryId: string, medIndex: number) => {
-    setInquiries(current => current.map(inq => {
+  // Toggle a medicine between in_stock and out_of_stock locally
+  const toggleMedicineStatus = (inquiryId: string, medIndex: number, newStatus: 'in_stock' | 'out_of_stock') => {
+    setInquiries(prev => prev.map(inq => {
       if (inq.id === inquiryId) {
-        const payload = parsePayload(inq.medicine_query);
-        const currentStatus = payload.medicines[medIndex].status;
-        
-        // FIX: A single click immediately marks it out of stock, another click brings it back
-        payload.medicines[medIndex].status = (currentStatus === 'out_of_stock') ? 'in_stock' : 'out_of_stock';
-        
-        return { ...inq, medicine_query: JSON.stringify(payload) };
+        const updatedMeds = [...inq.parsedQuery.medicines];
+        updatedMeds[medIndex].status = newStatus;
+        return { ...inq, parsedQuery: { ...inq.parsedQuery, medicines: updatedMeds } };
       }
       return inq;
     }));
   };
-  // SUBMIT FINAL RESPONSE TO PATIENT
-  const submitResponse = async (inq: Inquiry) => {
-    const payload = parsePayload(inq.medicine_query);
+
+  // Send the final response back to the patient
+  const sendResponse = async (inquiry: ParsedInquiry) => {
+    // Check if pharmacist missed any items
+    const unhandledItems = inquiry.parsedQuery.medicines.filter(m => m.status === 'pending');
+    if (unhandledItems.length > 0) {
+      toast.error("Please mark all items as In-Stock or Out-of-Stock before sending.");
+      return;
+    }
+
+    setIsProcessing(inquiry.id);
     
-    payload.medicines = payload.medicines.map((m: any) => ({
-      ...m,
-      status: m.status === 'pending' ? 'in_stock' : m.status
-    }));
+    // Repackage the data
+    const finalQueryString = JSON.stringify(inquiry.parsedQuery);
 
-    // 1. Optimistic UI update & Toast
-    setInquiries(current => current.filter(i => i.id !== inq.id));
-    triggerToast(`✅ Response sent! Patient notified for Order #${inq.id.split('-')[0]}`);
-
-    // 2. Update Database with ERROR LOGGING
-    const { data, error } = await supabase
+    const { error } = await supabase
       .from('inquiries')
       .update({ 
         status: 'responded', 
-        medicine_query: JSON.stringify(payload) 
+        medicine_query: finalQueryString 
       })
-      .eq('id', inq.id)
-      .select(); // Ask Supabase to return the updated data
+      .eq('id', inquiry.id);
 
     if (error) {
-      console.error("❌ SUPABASE UPDATE ERROR:", error);
-      alert(`Database Error: ${error.message}`);
+      toast.error("Failed to send response to patient.");
+      console.error(error);
     } else {
-      console.log("✅ SUPABASE UPDATE SUCCESS:", data);
+      toast.success("Response sent! Patient has been notified.");
+      // Remove it from the active dashboard
+      setInquiries(prev => prev.filter(inq => inq.id !== inquiry.id));
     }
+    setIsProcessing(null);
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 selection:bg-sky-200 selection:text-sky-900 font-sans flex flex-col relative overflow-x-hidden">
+    <div className="min-h-screen bg-slate-50 dark:bg-[#020617] text-slate-900 dark:text-slate-50 transition-colors duration-300 font-sans pb-20">
       
       {/* NAVBAR */}
-      <nav className="fixed top-0 w-full z-50 bg-white/70 backdrop-blur-md border-b border-white/20 shadow-sm transition-all">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-2 cursor-pointer hover:opacity-80 transition-opacity">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-sky-500 to-emerald-400 flex items-center justify-center text-white font-bold text-xl shadow-md">+</div>
-            <span className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-slate-800 to-slate-600">Sanjeevani</span>
+      <nav className="fixed top-0 w-full z-50 bg-white/70 dark:bg-slate-900/60 backdrop-blur-xl border-b border-white/20 dark:border-slate-800/50 shadow-sm transition-all duration-300">
+        <div className="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-slate-900 dark:bg-white flex items-center justify-center text-white dark:text-slate-900 shadow-md">
+              <Activity size={24} />
+            </div>
+            <div>
+              <h1 className="text-xl font-bold leading-tight">Rx Radar</h1>
+              <p className="text-xs text-slate-500 dark:text-slate-400 font-medium tracking-wide uppercase">Pharmacist Portal</p>
+            </div>
           </div>
-          <div className="hidden md:flex gap-8 text-sm font-medium text-slate-600">
-            <a href="/" className="hover:text-sky-600 transition-colors">Patient Map</a>
-            <a href="#" className="text-sky-600 font-bold transition-colors">Pharmacist Portal</a>
+          
+          <div className="flex items-center gap-6 text-sm font-medium">
+            <a href="/" className="text-slate-500 hover:text-sky-600 dark:text-slate-400 dark:hover:text-sky-400 transition-colors">← Back to Map</a>
+            <div className="pl-6 border-l border-slate-200 dark:border-slate-800">
+              <ThemeToggle />
+            </div>
           </div>
         </div>
       </nav>
 
       {/* DASHBOARD CONTENT */}
-      <main className="flex-grow pt-28 pb-16 px-4 md:px-8 flex flex-col items-center z-10">
-        <div className="max-w-4xl w-full space-y-8">
-          
-          <header className="bg-white/80 backdrop-blur-xl p-6 rounded-2xl shadow-lg border border-white flex justify-between items-center relative z-20">
-            <div>
-              <h1 className="text-3xl font-extrabold text-slate-900 tracking-tight">Pharmacist Console</h1>
-              <p className="text-slate-500 font-medium mt-1">Manage incoming critical medicine requests.</p>
-            </div>
-            <div className="flex items-center gap-3 bg-emerald-50 px-5 py-2.5 rounded-full border border-emerald-100 shadow-sm">
-              <span className="relative flex h-3 w-3"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span><span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span></span>
-              <span className="text-sm font-bold text-emerald-700 uppercase tracking-wide">System Live</span>
-            </div>
-          </header>
+      <main className="max-w-7xl mx-auto px-6 pt-32">
+        
+        <div className="flex items-center justify-between mb-8">
+          <h2 className="text-3xl font-extrabold tracking-tight">Active Inquiries</h2>
+          <div className="flex items-center gap-2 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 px-4 py-2 rounded-full text-sm font-bold shadow-sm">
+            <span className="relative flex h-3 w-3">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+            </span>
+            System Online
+          </div>
+        </div>
 
-          <div className="space-y-6">
-            {inquiries.length === 0 ? (
-              <div className="text-center p-16 bg-white/60 backdrop-blur-md rounded-2xl border-2 border-dashed border-slate-200 flex flex-col items-center justify-center space-y-4">
-                <div className="w-16 h-16 bg-sky-50 rounded-full flex items-center justify-center text-3xl animate-bounce">📡</div>
-                <div>
-                  <h3 className="text-xl font-bold text-slate-700">Listening for nearby patients...</h3>
-                  <p className="text-slate-500 mt-1">New requests will appear here instantly.</p>
-                </div>
-              </div>
-            ) : (
-              inquiries.map((inq) => {
-                const payload = parsePayload(inq.medicine_query);
+        {inquiries.length === 0 ? (
+          // EMPTY STATE
+          <div className="w-full h-[50vh] flex flex-col items-center justify-center border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-3xl bg-white/50 dark:bg-slate-900/20 backdrop-blur-sm">
+            <div className="relative mb-6">
+              <div className="absolute inset-0 bg-sky-400 rounded-full blur-2xl opacity-20 animate-pulse"></div>
+              <Activity size={64} className="text-slate-300 dark:text-slate-700 relative z-10" />
+            </div>
+            <h3 className="text-xl font-bold text-slate-500 dark:text-slate-400 mb-2">Awaiting Emergency Pings</h3>
+            <p className="text-slate-400 dark:text-slate-500 max-w-sm text-center">Leave this dashboard open. New patient requests will automatically appear here in real-time.</p>
+          </div>
+        ) : (
+          // INQUIRY GRID
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {inquiries.map((inquiry) => (
+              <div key={inquiry.id} className="bg-white dark:bg-slate-900 rounded-3xl shadow-xl border border-slate-200 dark:border-slate-800 overflow-hidden flex flex-col transition-all duration-300 hover:shadow-2xl hover:border-sky-200 dark:hover:border-sky-900/50 animate-in fade-in slide-in-from-bottom-4">
                 
-                return (
-                  <div key={inq.id} className="bg-white p-6 rounded-2xl shadow-md border-l-[6px] border-sky-500 flex flex-col gap-6 animate-in slide-in-from-top-4">
-                    
-                    {/* Header: ETA & Distance */}
-                    <div className="flex justify-between items-start border-b border-slate-100 pb-4">
-                      <div>
-                        <div className="flex items-center gap-3 mb-1">
-                          <span className="px-3 py-1 bg-rose-100 text-rose-700 text-xs font-extrabold uppercase rounded-md animate-pulse">Urgent Request</span>
-                          <span className="text-xs text-slate-400 font-medium">ID: {inq.id.split('-')[0]}</span>
-                        </div>
-                        <p className="text-sm font-semibold text-slate-600 mt-2">
-                          Patient is <span className="text-sky-600">{payload.patient_distance}</span> away. 
-                          Expected arrival: <span className="text-emerald-600 text-lg">~{payload.eta_minutes} mins</span>
-                        </p>
+                {/* Header Info */}
+                <div className="p-6 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/20 flex justify-between items-start">
+                  <div>
+                    <span className="inline-flex items-center gap-1.5 text-xs font-bold px-2.5 py-1 rounded-md bg-amber-100 dark:bg-amber-900/30 text-amber-800 dark:text-amber-400 mb-3 uppercase tracking-wider">
+                      <AlertCircle size={14}/> Action Required
+                    </span>
+                    <div className="flex items-center gap-4 text-sm text-slate-600 dark:text-slate-400 font-medium">
+                      <span className="flex items-center gap-1.5"><Clock size={16} className="text-sky-500"/> ETA: {inquiry.parsedQuery.eta_minutes} mins</span>
+                      <span className="flex items-center gap-1.5"><MapPin size={16} className="text-rose-400"/> {inquiry.parsedQuery.patient_distance} away</span>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-xs text-slate-400 dark:text-slate-500 font-medium">Order ID</p>
+                    <p className="text-sm font-mono text-slate-900 dark:text-slate-300">{inquiry.id.split('-')[0]}</p>
+                  </div>
+                </div>
+
+                {/* Medicine List */}
+                <div className="p-6 flex-grow space-y-4">
+                  <p className="text-sm font-bold text-slate-900 dark:text-white uppercase tracking-wider">Requested Items</p>
+                  
+                  {inquiry.parsedQuery.medicines.map((med, index) => (
+                    <div key={index} className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800">
+                      <span className="font-semibold text-lg text-slate-800 dark:text-slate-200">{med.name}</span>
+                      
+                      {/* Interactive Toggles */}
+                      <div className="flex items-center gap-2 bg-white dark:bg-slate-900 p-1.5 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm">
+                        <button 
+                          onClick={() => toggleMedicineStatus(inquiry.id, index, 'in_stock')}
+                          className={`flex-1 sm:flex-none flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-bold transition-all ${med.status === 'in_stock' ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400 shadow-inner' : 'text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800'}`}
+                        >
+                          <CheckCircle2 size={18} /> In Stock
+                        </button>
+                        <div className="w-px h-6 bg-slate-200 dark:bg-slate-700"></div>
+                        <button 
+                          onClick={() => toggleMedicineStatus(inquiry.id, index, 'out_of_stock')}
+                          className={`flex-1 sm:flex-none flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-bold transition-all ${med.status === 'out_of_stock' ? 'bg-rose-100 dark:bg-rose-900/40 text-rose-700 dark:text-rose-400 shadow-inner' : 'text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800'}`}
+                        >
+                          <XCircle size={18} /> Out of Stock
+                        </button>
                       </div>
                     </div>
+                  ))}
+                </div>
 
-                    {/* Body: Medicine Checklist */}
-                    <div className="space-y-3">
-                      <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Requested Items (Click to toggle stock)</p>
-                      {payload.medicines.map((med: any, index: number) => {
-                        // We assume it's in stock by default to save pharmacist clicks, unless they toggle it off.
-                        const inStock = med.status !== 'out_of_stock'; 
-                        
-                        return (
-                          <div 
-                            key={index}
-                            onClick={() => toggleMedicineStock(inq.id, index)}
-                            className={`p-4 rounded-xl border-2 cursor-pointer transition-all flex justify-between items-center group ${inStock ? 'bg-emerald-50 border-emerald-200' : 'bg-slate-50 border-slate-200 opacity-75'}`}
-                          >
-                            <span className={`font-bold text-lg ${inStock ? 'text-emerald-900' : 'text-slate-500 line-through'}`}>
-                              {med.name}
-                            </span>
-                            <span className={`text-sm font-bold px-3 py-1 rounded-md ${inStock ? 'bg-emerald-200 text-emerald-800' : 'bg-slate-200 text-slate-500'}`}>
-                              {inStock ? '✓ In Stock' : '❌ Out of Stock'}
-                            </span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                    
-                    {/* Footer: Submit Button */}
-                    <div className="pt-2">
-                      <button 
-                        onClick={() => submitResponse(inq)}
-                        className="w-full py-4 bg-slate-900 text-white font-bold rounded-xl shadow-lg hover:bg-sky-600 active:scale-95 transition-all text-lg"
-                      >
-                        Send Status & Accept Reservation
-                      </button>
-                    </div>
-
-                  </div>
-                );
-              })
-            )}
+                {/* Footer Action */}
+                <div className="p-6 pt-0">
+                  <button 
+                    onClick={() => sendResponse(inquiry)}
+                    disabled={isProcessing === inquiry.id}
+                    className="w-full py-4 rounded-xl bg-slate-900 dark:bg-sky-500 hover:bg-black dark:hover:bg-sky-600 text-white font-bold text-lg flex items-center justify-center gap-2 shadow-md transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isProcessing === inquiry.id ? (
+                      <span className="animate-pulse">Sending to Patient...</span>
+                    ) : (
+                      <><Send size={20} /> Reply to Patient</>
+                    )}
+                  </button>
+                </div>
+                
+              </div>
+            ))}
           </div>
-        </div>
+        )}
+
       </main>
-
-      {/* THE TOASTER NOTIFICATION */}
-      {toast.show && (
-        <div className="fixed bottom-8 right-8 z-[9999] animate-in slide-in-from-bottom-8 fade-in duration-300">
-          <div className="bg-slate-900 text-white px-6 py-4 rounded-xl shadow-2xl flex items-center gap-3 border border-slate-700">
-            <span className="text-xl">🚀</span>
-            <span className="font-semibold">{toast.message}</span>
-          </div>
-        </div>
-      )}
-
     </div>
   );
 }
