@@ -60,8 +60,8 @@ export default function Map({ selectedMeds, center }: { selectedMeds: string[], 
     // THE ANTI-SPAM BLOCKER
     const now = Date.now();
     const lastPing = localStorage.getItem('lastSanjeevaniPing');
-    if (lastPing && (now - parseInt(lastPing)) < 60000) { // 60,000 ms = 60 seconds
-      toast.error("🚨 Anti-Spam: Please wait 60 seconds before sending another emergency ping.");
+    if (lastPing && (now - parseInt(lastPing)) < 30000) { // 30,000 ms = 30 seconds
+      toast.error("🚨 Anti-Spam: Please wait 30 seconds before sending another emergency ping.");
       return;
     }
 

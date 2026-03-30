@@ -4,27 +4,78 @@ import { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import ThemeToggle from '../components/ThemeToggle';
 import toast from 'react-hot-toast';
-import { Activity, CheckCircle2, XCircle, Send, Clock, MapPin, AlertCircle } from 'lucide-react';
+import { Activity, CheckCircle2, XCircle, Send, Clock, MapPin, AlertCircle, Lock, ShieldCheck, Key } from 'lucide-react';
 
-// Types to keep our data structured
 type Medicine = { name: string; status: 'pending' | 'in_stock' | 'out_of_stock' };
 type Payload = { medicines: Medicine[]; eta_minutes: number; patient_distance: string };
 type Inquiry = { id: string; pharmacy_id: string; medicine_query: string; status: string; created_at: string };
-
-// Extended type so we don't have to keep JSON.parsing the query
 type ParsedInquiry = Inquiry & { parsedQuery: Payload };
 
 export default function PharmacistDashboard() {
+  // --- AUTHENTICATION STATE ---
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [pharmacyId, setPharmacyId] = useState<string | null>(null);
+  const [authInput, setAuthInput] = useState('');
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
+
+  // --- DASHBOARD STATE ---
   const [inquiries, setInquiries] = useState<ParsedInquiry[]>([]);
   const [isProcessing, setIsProcessing] = useState<string | null>(null);
 
+  // THE LOGIN FUNCTION (Demo Hack included)
+  const handleLogin = async (e?: React.FormEvent, useDemoMode = false) => {
+    if (e) e.preventDefault();
+    setIsLoggingIn(true);
+
+    try {
+      let activeId = authInput;
+
+      // DEMO MODE: Automatically grab the ID of the pharmacy that was just pinged
+      if (useDemoMode) {
+        const { data } = await supabase
+          .from('inquiries')
+          .select('pharmacy_id')
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .single();
+        
+        if (data) {
+          activeId = data.pharmacy_id;
+          toast.success("Demo Mode: Authenticated as latest pinged pharmacy!");
+        } else {
+          toast.error("No active pings found in the database to connect to.");
+          setIsLoggingIn(false);
+          return;
+        }
+      }
+
+      if (activeId.trim() === '') {
+        toast.error("Please enter a valid Pharmacy ID.");
+        setIsLoggingIn(false);
+        return;
+      }
+
+      // Lock it in
+      setPharmacyId(activeId);
+      setIsAuthenticated(true);
+    } catch (error) {
+      toast.error("Authentication failed.");
+    } finally {
+      setIsLoggingIn(false);
+    }
+  };
+
   useEffect(() => {
-    // 1. Fetch existing pending inquiries on load
+    // Only fetch data if we are securely logged in!
+    if (!isAuthenticated || !pharmacyId) return;
+
+    // 1. Fetch existing inquiries FOR THIS SPECIFIC PHARMACY ONLY
     const fetchInquiries = async () => {
       const { data, error } = await supabase
         .from('inquiries')
         .select('*')
         .eq('status', 'pending')
+        .eq('pharmacy_id', pharmacyId) // <-- SECURITY FILTER
         .order('created_at', { ascending: false });
 
       if (data) {
@@ -37,33 +88,34 @@ export default function PharmacistDashboard() {
     };
     fetchInquiries();
 
-    // 2. THE REAL-TIME RADAR (Listens for new pings AND cancellations)
+    // 2. THE SECURE REAL-TIME RADAR (Only listens for this pharmacy's ID)
     const channel = supabase
-      .channel('pharmacist-dashboard')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'inquiries' }, (payload) => {
-        if (payload.new.status === 'pending') {
-          const newInquiry = {
-            ...payload.new,
-            parsedQuery: JSON.parse(payload.new.medicine_query)
-          } as ParsedInquiry;
-          
-          setInquiries(prev => [newInquiry, ...prev]);
-          toast.success("🚨 New Emergency Ping received!");
-        }
+      .channel(`pharmacist-${pharmacyId}`)
+      .on('postgres_changes', 
+        { event: 'INSERT', schema: 'public', table: 'inquiries', filter: `pharmacy_id=eq.${pharmacyId}` }, 
+        (payload) => {
+          if (payload.new.status === 'pending') {
+            const newInquiry = {
+              ...payload.new,
+              parsedQuery: JSON.parse(payload.new.medicine_query)
+            } as ParsedInquiry;
+            setInquiries(prev => [newInquiry, ...prev]);
+            toast.success("🚨 New Emergency Ping received!");
+          }
       })
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'inquiries' }, (payload) => {
-        // THE CANCELLATION LISTENER: If a user cancels, remove it from the screen!
-        if (payload.new.status === 'cancelled') {
-          setInquiries(prev => prev.filter(inq => inq.id !== payload.new.id));
-          toast.error("A patient cancelled their request. You can release the stock.", { icon: '⚠️' });
-        }
+      .on('postgres_changes', 
+        { event: 'UPDATE', schema: 'public', table: 'inquiries', filter: `pharmacy_id=eq.${pharmacyId}` }, 
+        (payload) => {
+          if (payload.new.status === 'cancelled') {
+            setInquiries(prev => prev.filter(inq => inq.id !== payload.new.id));
+            toast.error("A patient cancelled their request. Release the stock.", { icon: '⚠️' });
+          }
       })
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
-  }, []);
+  }, [isAuthenticated, pharmacyId]);
 
-  // Toggle a medicine between in_stock and out_of_stock locally
   const toggleMedicineStatus = (inquiryId: string, medIndex: number, newStatus: 'in_stock' | 'out_of_stock') => {
     setInquiries(prev => prev.map(inq => {
       if (inq.id === inquiryId) {
@@ -75,9 +127,7 @@ export default function PharmacistDashboard() {
     }));
   };
 
-  // Send the final response back to the patient
   const sendResponse = async (inquiry: ParsedInquiry) => {
-    // Check if pharmacist missed any items
     const unhandledItems = inquiry.parsedQuery.medicines.filter(m => m.status === 'pending');
     if (unhandledItems.length > 0) {
       toast.error("Please mark all items as In-Stock or Out-of-Stock before sending.");
@@ -85,29 +135,75 @@ export default function PharmacistDashboard() {
     }
 
     setIsProcessing(inquiry.id);
-    
-    // Repackage the data
     const finalQueryString = JSON.stringify(inquiry.parsedQuery);
 
     const { error } = await supabase
       .from('inquiries')
-      .update({ 
-        status: 'responded', 
-        medicine_query: finalQueryString 
-      })
+      .update({ status: 'responded', medicine_query: finalQueryString })
       .eq('id', inquiry.id);
 
     if (error) {
-      toast.error("Failed to send response to patient.");
-      console.error(error);
+      toast.error("Failed to send response.");
     } else {
-      toast.success("Response sent! Patient has been notified.");
-      // Remove it from the active dashboard
+      toast.success("Response sent! Patient notified.");
       setInquiries(prev => prev.filter(inq => inq.id !== inquiry.id));
     }
     setIsProcessing(null);
   };
 
+  // =========================================================================
+  // VIEW 1: THE SECURE LOGIN GATEWAY
+  // =========================================================================
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-slate-50 dark:bg-[#020617] flex flex-col items-center justify-center p-4 transition-colors duration-300">
+        <div className="absolute top-6 right-6 z-50"><ThemeToggle /></div>
+        <a href="/" className="absolute top-6 left-6 z-50 text-slate-500 hover:text-sky-600 font-medium">← Back to Patient App</a>
+        
+        <div className="max-w-md w-full bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 p-8 relative overflow-hidden">
+          <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-sky-500 to-emerald-400"></div>
+          
+          <div className="w-16 h-16 bg-slate-100 dark:bg-slate-800 rounded-2xl flex items-center justify-center mb-6 border border-slate-200 dark:border-slate-700">
+            <Lock className="text-sky-600 dark:text-sky-400" size={32} />
+          </div>
+          
+          <h1 className="text-2xl font-extrabold text-slate-900 dark:text-white mb-2">Pharmacist Portal</h1>
+          <p className="text-slate-500 dark:text-slate-400 mb-8">Authorized personnel only. Please enter your secure facility ID to access live orders.</p>
+          
+          <form onSubmit={(e) => handleLogin(e, false)} className="space-y-4">
+            <div className="relative">
+              <Key className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+              <input 
+                type="password" 
+                placeholder="Enter Facility ID" 
+                className="w-full pl-12 pr-4 py-4 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20 outline-none text-slate-900 dark:text-white font-mono"
+                value={authInput}
+                onChange={(e) => setAuthInput(e.target.value)}
+              />
+            </div>
+            <button type="submit" disabled={isLoggingIn} className="w-full py-4 rounded-xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-bold hover:bg-black dark:hover:bg-slate-200 transition-colors flex justify-center items-center gap-2">
+              <ShieldCheck size={20} /> Secure Login
+            </button>
+          </form>
+
+          <div className="mt-8 pt-6 border-t border-slate-100 dark:border-slate-800">
+            <button 
+              onClick={() => handleLogin(undefined, true)}
+              disabled={isLoggingIn}
+              className="w-full py-3 rounded-xl bg-sky-50 dark:bg-sky-900/20 text-sky-700 dark:text-sky-400 font-bold hover:bg-sky-100 dark:hover:bg-sky-900/40 transition-colors border border-sky-200 dark:border-sky-800 text-sm"
+            >
+              Demo Mode: Auto-Login as recent ping
+            </button>
+            <p className="text-xs text-center text-slate-400 mt-3">For pitch purposes, this connects to the last pinged pharmacy.</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // =========================================================================
+  // VIEW 2: THE SECURE DASHBOARD
+  // =========================================================================
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-[#020617] text-slate-900 dark:text-slate-50 transition-colors duration-300 font-sans pb-20">
       
@@ -120,12 +216,14 @@ export default function PharmacistDashboard() {
             </div>
             <div>
               <h1 className="text-xl font-bold leading-tight">Rx Radar</h1>
-              <p className="text-xs text-slate-500 dark:text-slate-400 font-medium tracking-wide uppercase">Pharmacist Portal</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400 font-medium tracking-wide flex items-center gap-1">
+                <ShieldCheck size={12}/> ID: {pharmacyId?.substring(0, 12)}...
+              </p>
             </div>
           </div>
           
           <div className="flex items-center gap-6 text-sm font-medium">
-            <a href="/" className="text-slate-500 hover:text-sky-600 dark:text-slate-400 dark:hover:text-sky-400 transition-colors">← Back to Map</a>
+            <button onClick={() => setIsAuthenticated(false)} className="text-slate-500 hover:text-rose-600 dark:text-slate-400 dark:hover:text-rose-400 transition-colors">Lock Portal</button>
             <div className="pl-6 border-l border-slate-200 dark:border-slate-800">
               <ThemeToggle />
             </div>
@@ -155,7 +253,7 @@ export default function PharmacistDashboard() {
               <Activity size={64} className="text-slate-300 dark:text-slate-700 relative z-10" />
             </div>
             <h3 className="text-xl font-bold text-slate-500 dark:text-slate-400 mb-2">Awaiting Emergency Pings</h3>
-            <p className="text-slate-400 dark:text-slate-500 max-w-sm text-center">Leave this dashboard open. New patient requests will automatically appear here in real-time.</p>
+            <p className="text-slate-400 dark:text-slate-500 max-w-sm text-center">Your portal is securely locked to your facility. New patient requests will appear here instantly.</p>
           </div>
         ) : (
           // INQUIRY GRID
