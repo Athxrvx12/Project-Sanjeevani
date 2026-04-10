@@ -62,7 +62,13 @@ export default function Home() {
       }
     } catch (error: any) {
       console.error("AI Scan Error:", error);
-      toast.error(`Scan failed: ${error.message}`);
+      
+      // Check if it's the specific 503 capacity error
+      if (error.message.includes("503") || error.message.includes("high demand")) {
+        toast.error("Google's AI servers are currently busy. Please wait a minute and try again, or type the medicine manually!");
+      } else {
+        toast.error(`Scan failed: ${error.message}`);
+      }
     } finally {
       setIsScanning(false);
       if (fileInputRef.current) fileInputRef.current.value = ''; 

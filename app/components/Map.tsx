@@ -191,10 +191,11 @@ export default function Map({ selectedMeds, center }: { selectedMeds: string[], 
     };
   }, [center]);
 
-  // THE BULLETPROOF REAL-TIME LISTENER
+  // THE BULLETPROOF REAL-TIME LISTENER (With Polling Failsafe)
   useEffect(() => {
     if (!activePingId) return;
 
+    // 1. PRIMARY: The WebSocket Listener (Instant)
     const channel = supabase
       .channel(`patient-ping-${activePingId}`)
       .on('postgres_changes',
@@ -206,13 +207,36 @@ export default function Map({ selectedMeds, center }: { selectedMeds: string[], 
               setPharmacistResponse({ id: payload.new.id, data: resultData });
               setActivePingId(null);
             } catch (err) {
-              console.error("Failed to parse pharmacist JSON:", err);
+              console.error(err);
             }
           }
         }
       ).subscribe();
 
-    return () => { supabase.removeChannel(channel); };
+    // 2. BACKUP: The Polling Engine (Fires every 3 seconds)
+    // Guarantees the modal pops up even if WebSockets or WiFi fail during a pitch
+    const interval = setInterval(async () => {
+      const { data, error } = await supabase
+        .from('inquiries')
+        .select('status, medicine_query')
+        .eq('id', activePingId)
+        .single();
+        
+      if (data && data.status === 'responded') {
+        try {
+          const resultData = JSON.parse(data.medicine_query);
+          setPharmacistResponse({ id: activePingId, data: resultData });
+          setActivePingId(null);
+        } catch (err) {
+          console.error(err);
+        }
+      }
+    }, 3000);
+
+    return () => { 
+      supabase.removeChannel(channel); 
+      clearInterval(interval);
+    };
   }, [activePingId]);
 
   return (
@@ -249,8 +273,8 @@ export default function Map({ selectedMeds, center }: { selectedMeds: string[], 
 
       {/* THE SMART MULTI-MEDICINE MODAL WITH DYNAMIC PRICING (Now with Dark Mode!) */}
       {pharmacistResponse && (
-        <div className="absolute top-0 left-0 w-full h-full bg-slate-900/60 backdrop-blur-sm z-[9999] flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-800 p-8 rounded-2xl shadow-2xl max-w-md w-full animate-in zoom-in duration-200 border border-slate-200 dark:border-slate-700">
+        <div className="absolute top-0 left-0 w-full h-full bg-slate-900/60 backdrop-blur-sm z-[9999] flex items-center justify-center p-4 sm:p-6">
+          <div className="bg-white dark:bg-slate-800 p-6 sm:p-8 rounded-2xl shadow-2xl max-w-md w-full animate-in zoom-in duration-200 border border-slate-200 dark:border-slate-700 max-h-[90vh] overflow-y-auto">
             <h2 className="text-2xl font-bold text-slate-800 dark:text-white mb-4">Pharmacist Response</h2>
             
             <div className="space-y-3 mb-6">

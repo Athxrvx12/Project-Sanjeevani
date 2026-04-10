@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import ThemeToggle from '../components/ThemeToggle';
 import toast from 'react-hot-toast';
-import { Activity, CheckCircle2, XCircle, Send, Clock, MapPin, AlertCircle, Lock, ShieldCheck, Mail, Key, UserPlus, LogIn } from 'lucide-react';
+import { Activity, CheckCircle2, XCircle, Send, Clock, MapPin, AlertCircle, Lock, ShieldCheck, Mail, Key, UserPlus, LogIn, Menu, X } from 'lucide-react';
 
 type Medicine = { name: string; status: 'pending' | 'in_stock' | 'out_of_stock' };
 type Payload = { medicines: Medicine[]; eta_minutes: number; patient_distance: string };
@@ -13,6 +13,7 @@ type ParsedInquiry = Inquiry & { parsedQuery: Payload };
 
 export default function PharmacistDashboard() {
   // --- TRUE AUTHENTICATION STATE ---
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [session, setSession] = useState<any>(null);
   const [isSignUp, setIsSignUp] = useState(false);
   const [email, setEmail] = useState('');
@@ -262,8 +263,9 @@ export default function PharmacistDashboard() {
   // =========================================================================
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-[#020617] text-slate-900 dark:text-slate-50 transition-colors duration-300 font-sans pb-20">
+      {/* RESPONSIVE NAVBAR */}
       <nav className="fixed top-0 w-full z-50 bg-white/70 dark:bg-slate-900/60 backdrop-blur-xl border-b border-white/20 dark:border-slate-800/50 shadow-sm transition-all duration-300">
-        <div className="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-20 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-slate-900 dark:bg-white flex items-center justify-center text-white dark:text-slate-900 shadow-md">
               <ShieldCheck size={24} className="text-emerald-400 dark:text-emerald-600" />
@@ -271,18 +273,39 @@ export default function PharmacistDashboard() {
             <div>
               <h1 className="text-xl font-bold leading-tight">Rx Radar</h1>
               <p className="text-xs text-slate-500 dark:text-slate-400 font-medium tracking-wide flex items-center gap-1">
-                Verified: {pharmacyProfile?.substring(0, 12)}...
+                Verified: {pharmacyProfile?.substring(0, 8)}...
               </p>
             </div>
           </div>
           
-          <div className="flex items-center gap-6 text-sm font-medium">
+          {/* Desktop Menu */}
+          <div className="hidden md:flex items-center gap-6 text-sm font-medium">
             <button onClick={handleLogout} className="text-slate-500 hover:text-rose-600 dark:text-slate-400 dark:hover:text-rose-400 transition-colors">Sign Out</button>
             <div className="pl-6 border-l border-slate-200 dark:border-slate-800">
               <ThemeToggle />
             </div>
           </div>
+
+          {/* Mobile Menu Toggle Button */}
+          <div className="md:hidden flex items-center gap-4">
+            <ThemeToggle />
+            <button 
+              onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+              className="p-2 bg-slate-100 dark:bg-slate-800 rounded-lg text-slate-600 dark:text-slate-300"
+            >
+              {isMobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
+            </button>
+          </div>
         </div>
+
+        {/* Mobile Dropdown Menu */}
+        {isMobileMenuOpen && (
+          <div className="md:hidden absolute top-20 left-0 w-full bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 shadow-xl py-4 px-6 flex flex-col gap-4 animate-in slide-in-from-top-2">
+            <button onClick={handleLogout} className="w-full py-3 bg-rose-50 dark:bg-rose-900/20 text-rose-600 dark:text-rose-400 rounded-xl font-bold">
+              Sign Out Securely
+            </button>
+          </div>
+        )}
       </nav>
 
       <main className="max-w-7xl mx-auto px-6 pt-32">
