@@ -1,6 +1,6 @@
-# 📡 RxRadar | Real-Time AI Medical Logistics Network
+# 📡 Project Sanjeevani | Real-Time AI Medical Logistics Network
 
-RxRadar (Project Sanjeevani) is an end-to-end, multi-tenant digital health platform engineered to bridge the gap between critical patients and fragmented medical supply chains. By utilizing computer vision and zero-latency networking, the platform digitizes handwritten prescriptions and instantly broadcasts localized emergency pings to nearby verified pharmacies for rapid stock fulfillment.
+Project Sanjeevani is an end-to-end, multi-tenant digital health platform engineered to bridge the gap between critical patients and fragmented medical supply chains. By utilizing computer vision and zero-latency networking, the platform digitizes handwritten prescriptions and instantly broadcasts localized emergency pings to nearby verified pharmacies for rapid stock fulfillment.
 
 ---
 
