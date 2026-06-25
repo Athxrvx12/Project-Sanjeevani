@@ -1,10 +1,64 @@
+# 📡 RxRadar | Real-Time AI Medical Logistics Network
+
+RxRadar (Project Sanjeevani) is an end-to-end, multi-tenant digital health platform engineered to bridge the gap between critical patients and fragmented medical supply chains. By utilizing computer vision and zero-latency networking, the platform digitizes handwritten prescriptions and instantly broadcasts localized emergency pings to nearby verified pharmacies for rapid stock fulfillment.
+
+---
+
+## 🛠️ The Technology Stack
+
+| Component | Technology | Purpose |
+| :--- | :--- | :--- |
+| **Frontend Framework** | Next.js (React), TypeScript | Handles responsive UI logic, routing, and client state. |
+| **Styling & Theme** | Tailwind CSS v4, Next-Themes | Implements glassmorphic dark/light mode design semantics. |
+| **Database & Real-Time**| Supabase (PostgreSQL) | Manages multi-tenant relational data and WebSocket sync. |
+| **AI Microservice** | Python, FastAPI, Google Gemini | Dedicated vision computation cluster deployed on Render. |
+| **Mapping Engine** | React-Leaflet, OpenStreetMap | Renders interactive geospatial data and distance matrix routing. |
+
+---
+
+## 🚀 Implemented Architecture (Current Build)
+
+The application is decoupled into an asynchronous, secure service-oriented architecture:
+
+### 1. The AI Vision Engine (Prescription Digitization)
+* **Handwriting Extraction:** Integrates Google Gemini Vision AI via a dedicated Python FastAPI microservice to ingest unstructured, handwritten prescription images.
+* **Structured Parsing:** Processes raw text into a strict, programmatic JSON schema detailing medicine names and dosages, handed back cleanly to the client core.
+
+### 2. Geospatial Proximity Radar
+* **Dynamic Radius Scan:** Utilizes the OpenStreetMap Overpass API to dynamically scan and identify verified local pharmacies within a 5km radius of the user's localized GPS coordinates.
+* **Distance Computation:** Implements the mathematical **Haversine Formula** natively in TypeScript to calculate absolute terrestrial proximity.
+
+### 3. Zero-Latency Real-Time Loop
+* **WebSocket Event Streaming:** Leverages Supabase Real-Time engine (`pg_changes` channel over WebSockets) to broadcast emergency medicine inquiries instantly to targeted pharmacists without manual API polling or page refreshes.
+* **Polling Failsafe Protocol:** Built an automatic 3-second database polling interval into the client core as an architectural redundancy system in case of sudden network jitter or dropped WebSocket handshakes.
+
+### 4. Enterprise-Grade Security & Multi-Tenancy
+* **Cryptographic Access Control:** Utilizes Supabase Auth to isolate corporate pharmacy profiles linking authenticated credentials to distinct OpenStreetMap Facility IDs.
+* **Row Level Security (RLS):** Implements strict PostgreSQL RLS policies directly on the database cluster, mathematically verifying tokenized signatures (`auth.uid()`) to ensure no pharmacy tenant can intercept or view data rows belonging to another.
+
+---
+
+## 💡 Impact & Benefits
+
+* **Erases Time-to-Fulfillment:** Eliminates the grueling manual process of physically driving or calling multiple pharmacies sequentially during late-night emergencies.
+* **Optimized Resource Allocation:** Pushes critical inquiries cleanly onto a dedicated, secure dashboard, allowing pharmacists to quickly communicate itemized inventory availability in under two clicks.
+* **Instant Allocation:** Generates dynamic UPI deep links (`upi://pay?...`) calculated accurately against available quantities, allowing immediate allocation fees to lock down crucial stock.
+
+---
+
+## 📦 Getting Started
+
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
-## Getting Started
+### Prerequisites
+Ensure you have Node.js (v18+) and your environment variables set up for Supabase and the FastAPI backend.
 
-First, run the development server:
+### Run the Development Server
+
+First, install dependencies and run the development server:
 
 ```bash
+npm install
 npm run dev
 # or
 yarn dev
@@ -12,25 +66,3 @@ yarn dev
 pnpm dev
 # or
 bun dev
-```
-
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
-
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
-
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
