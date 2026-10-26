@@ -36,6 +36,13 @@ function getDistanceInMeters(lat1: number, lon1: number, lat2: number, lon2: num
   return Math.round(R * c);
 }
 
+// Multi-server fallback array for Overpass API
+const OVERPASS_ENDPOINTS = [
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter',
+  'https://maps.mail.ru/osm/tools/overpass/api/interpreter'
+];
+
 // This tiny component sits inside the map and controls the camera
 function MapUpdater({ center }: { center: [number, number] }) {
   const map = useMap();
@@ -92,13 +99,13 @@ export default function Map({ selectedMeds, center }: { selectedMeds: string[], 
       .single();
 
     if (error) {
-      console.error("Ping Error:", error);
-      toast.error("Failed to send ping.");
-    } else if (data) {
+  console.error("Ping Error:", error.message, error.details, error.hint, error.code);
+  toast.error(`Failed: ${error.message}`);
+} else if (data) {
       setActivePingId(data.id);
       toast.success(`Ping sent! Tracking ${selectedMeds.length} medicines. Estimated arrival: ${estimatedMinutes} mins.`);
     }
-  }; // <--- sendPing officially ends here!
+  };
 
   // 2. THE CANCEL FUNCTION
   const handleCloseAndCancel = async () => {
@@ -110,6 +117,7 @@ export default function Map({ selectedMeds, center }: { selectedMeds: string[], 
     }
     setPharmacistResponse(null);
   };
+
   // Fetch REAL pharmacies from the global Overpass API (With Bulletproof Fallback)
   useEffect(() => {
     const abortController = new AbortController();
@@ -117,28 +125,32 @@ export default function Map({ selectedMeds, center }: { selectedMeds: string[], 
     async function fetchLivePharmacies() {
       setIsLoadingPharmacies(true);
       
-      // FIX 1: Use 'nwr' (node, way, relation) to catch buildings, not just points!
-      // Added 'out center' to find the middle of the buildings.
       const query = `
         [out:json][timeout:10];
         nwr["amenity"="pharmacy"](around:5000,${center[0]},${center[1]});
         out center 15; 
       `;
       
-      try {
-        const res = await fetch('https://overpass-api.de/api/interpreter', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: `data=${encodeURIComponent(query)}`,
-          signal: abortController.signal
-        });
-        
-        let fetchedPharmacies: Pharmacy[] = [];
+      let fetchedPharmacies: Pharmacy[] = [];
+      let success = false;
 
-        if (res.ok) {
+      // Loop through endpoints until one succeeds
+      for (const endpoint of OVERPASS_ENDPOINTS) {
+        try {
+          const res = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: `data=${encodeURIComponent(query)}`,
+            signal: abortController.signal
+          });
+          
+          if (!res.ok) {
+            console.warn(`Overpass mirror ${endpoint} failed with status ${res.status}. Trying next...`);
+            continue;
+          }
+
           const data = await res.json();
           fetchedPharmacies = data.elements.map((element: any) => {
-            // FIX 2: Check for element.lat (node) OR element.center.lat (building)
             const lat = element.lat || element.center?.lat;
             const lon = element.lon || element.center?.lon;
             const distance = getDistanceInMeters(center[0], center[1], lat, lon);
@@ -151,37 +163,31 @@ export default function Map({ selectedMeds, center }: { selectedMeds: string[], 
               lat: lat,
               lon: lon
             };
-          }).filter((p: any) => p.lat && p.lon); // Make sure we have valid GPS points
+          }).filter((p: any) => p.lat && p.lon);
+          
+          success = true;
+          break; // Stop trying if successful
+        } catch (err: any) {
+          if (err.name === 'AbortError') return; // Exit cleanly if component unmounts
+          console.warn(`Fetch failed on ${endpoint}:`, err.message || err);
         }
-
-        // FIX 3: THE DEMO SAFETY NET
-        // If the API failed, OR if it returned 0 pharmacies, spawn realistic fallbacks
-        if (!res.ok || fetchedPharmacies.length === 0) {
-          console.warn("Using fallback pharmacies for demo stability.");
-          fetchedPharmacies = [
-            { id: 'fallback-1', shop_name: 'Apollo Pharmacy', address_text: '', distance_meters: 450, lat: center[0] + 0.004, lon: center[1] + 0.004 },
-            { id: 'fallback-2', shop_name: 'Wellness Forever', address_text: '', distance_meters: 800, lat: center[0] - 0.005, lon: center[1] + 0.002 },
-            { id: 'fallback-3', shop_name: 'MedPlus Mart', address_text: '', distance_meters: 1200, lat: center[0] + 0.008, lon: center[1] - 0.006 },
-            { id: 'fallback-4', shop_name: 'Noble Plus', address_text: '', distance_meters: 2100, lat: center[0] - 0.012, lon: center[1] - 0.010 },
-            { id: 'fallback-5', shop_name: 'Sanjeevani Partner Rx', address_text: '', distance_meters: 3500, lat: center[0] + 0.020, lon: center[1] + 0.015 },
-          ];
-        }
-
-        // Sort whatever we got by distance so the closest is first
-        fetchedPharmacies.sort((a, b) => a.distance_meters - b.distance_meters);
-        setPharmacies(fetchedPharmacies);
-        
-      } catch (err: any) {
-        if (err.name !== 'AbortError') {
-          console.error("Map fetch error:", err);
-          // Safety Net for catastrophic network failure
-          setPharmacies([
-            { id: 'fallback-safe', shop_name: 'Apollo Pharmacy', address_text: '', distance_meters: 450, lat: center[0] + 0.004, lon: center[1] + 0.004 }
-          ]);
-        }
-      } finally {
-        setIsLoadingPharmacies(false);
       }
+
+      // THE DEMO SAFETY NET (If all APIs failed or returned 0 results)
+      if (!success || fetchedPharmacies.length === 0) {
+        console.warn("Using fallback pharmacies for demo stability.");
+        fetchedPharmacies = [
+          { id: 'fallback-1', shop_name: 'Apollo Pharmacy', address_text: '', distance_meters: 450, lat: center[0] + 0.004, lon: center[1] + 0.004 },
+          { id: 'fallback-2', shop_name: 'Wellness Forever', address_text: '', distance_meters: 800, lat: center[0] - 0.005, lon: center[1] + 0.002 },
+          { id: 'fallback-3', shop_name: 'MedPlus Mart', address_text: '', distance_meters: 1200, lat: center[0] + 0.008, lon: center[1] - 0.006 },
+          { id: 'fallback-4', shop_name: 'Noble Plus', address_text: '', distance_meters: 2100, lat: center[0] - 0.012, lon: center[1] - 0.010 },
+          { id: 'fallback-5', shop_name: 'Sanjeevani Partner Rx', address_text: '', distance_meters: 3500, lat: center[0] + 0.020, lon: center[1] + 0.015 },
+        ];
+      }
+
+      fetchedPharmacies.sort((a, b) => a.distance_meters - b.distance_meters);
+      setPharmacies(fetchedPharmacies);
+      setIsLoadingPharmacies(false);
     }
     
     fetchLivePharmacies();
@@ -214,7 +220,6 @@ export default function Map({ selectedMeds, center }: { selectedMeds: string[], 
       ).subscribe();
 
     // 2. BACKUP: The Polling Engine (Fires every 3 seconds)
-    // Guarantees the modal pops up even if WebSockets or WiFi fail during a pitch
     const interval = setInterval(async () => {
       const { data, error } = await supabase
         .from('inquiries')
@@ -271,7 +276,7 @@ export default function Map({ selectedMeds, center }: { selectedMeds: string[], 
         ))}
       </MapContainer>
 
-      {/* THE SMART MULTI-MEDICINE MODAL WITH DYNAMIC PRICING (Now with Dark Mode!) */}
+      {/* THE SMART MULTI-MEDICINE MODAL WITH DYNAMIC PRICING */}
       {pharmacistResponse && (
         <div className="absolute top-0 left-0 w-full h-full bg-slate-900/60 backdrop-blur-sm z-[9999] flex items-center justify-center p-4 sm:p-6">
           <div className="bg-white dark:bg-slate-800 p-6 sm:p-8 rounded-2xl shadow-2xl max-w-md w-full animate-in zoom-in duration-200 border border-slate-200 dark:border-slate-700 max-h-[90vh] overflow-y-auto">
